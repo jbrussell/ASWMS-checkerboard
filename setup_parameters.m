@@ -61,7 +61,7 @@ stafile = './stations.txt'; % text file containing stations [staname, lat, lon, 
 % parameters.is_rm_resp = 0;
 % parameters.periods = sort(parameters.periods);  % make sure periods are ascending
 parameters.refv = 4;   % to select the correct cycle
-% parameters.refphv = ones(size(parameters.periods))*4;
+parameters.refphv = 4*ones(size(parameters.periods));
 % parameters.min_width = 0.06;  % to build up gaussian filters
 % parameters.max_width = 0.10;  
 % parameters.wintaperlength = 30;   % taper to build up the isolation filter
@@ -76,8 +76,12 @@ parameters.refv = 4;   % to select the correct cycle
 %%%% %%%% %%%% %%%% %%%% %%%% %%%% %%%% %%%% %%%%
 % parameters for the tomography
 % (eikonal_eq.m helmholtz_eq.m)
-parameters.smweight_array = 1*[0.2 0.5 1]; % 2nd deriv smoothing weight for the deltaSx and delta Sy
-parameters.flweight_array = 0*ones(size(parameters.periods)); % JBR 1st deriv smoothing
+parameters.grd_per_wl = parameters.refphv.*parameters.periods./deg2km(parameters.gridsize); % JBR - grid cells per wavelength
+parameters.smweight_array = 0.1*parameters.grd_per_wl; % 2nd derivative smoothing weight for the deltaSx and delta Sy
+parameters.flweight_array = 0*parameters.grd_per_wl; % JBR - 1st derivative smoothing
+% parameters.smweight_array = 1*[0.2 0.5 1]; % 2nd deriv smoothing weight for the deltaSx and delta Sy
+% parameters.flweight_array = 0*ones(size(parameters.periods)); % JBR 1st deriv smoothing
+parameters.is_offgc_smoothing = 0; % 1st derivative smoothing along propagation direction rather than great circle. Requires an initial run of a6_a0_eikonal_eq_GetPropAzi.m to get propagation azimuth
 parameters.raydensetol=deg2km(parameters.gridsize)*2;
 parameters.Tdumpweight = 0;  % dumping the ray to the girgle circle path
 parameters.Rdumpweight = 0;  % dumping the region to have the same phase velocity
@@ -105,11 +109,14 @@ parameters.event_bias_tol = 3; %2;
 
 
 % %%%% %%%% %%%% %%%% %%%% %%%% %%%% %%%% %%%% %%%%
-% % parameters for azimuthal anisotropy inversion
-% % beta version
-% parameters.smsize = 3; %1;  % averaging nearby grid number
-% parameters.off_azi_tol = 30; % differ from great circle path in degrees
-% parameters.is_one_phi = 0; %1;
+% parameters for azimuthal anisotropy inversion
+% beta version
+parameters.gridsize_azi = parameters.gridsize; % grid size for azimuthal anisotropy in a6_b_eikonal_2DanisoRT.m
+parameters.smsize = 3; %1;  % averaging nearby grid number
+parameters.azi_bin_deg_ani= 20; % [deg] size of azimuthal bins
+parameters.off_azi_tol = 30; % differ from great circle path in degrees
+parameters.is_one_phi = 0; %1;
+parameters.is_offgc_propagation = 0; % % Account for off-great-circle propagation using eikonal tomography maps? Otherwise will assume great-circle propagation.
 
 % %%%% %%%% %%%% %%%% %%%% %%%% %%%% %%%% %%%% %%%%
 % % parameters for attenuation estimate

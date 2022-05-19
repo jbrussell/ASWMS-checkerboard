@@ -41,8 +41,6 @@ for ie = 1:length(evlist)
     for ista = 1:length(stlat)
         dists(ista) = vdist(evla,evlo,stlat(ista),stlon(ista))/1000;
     end
-    [~,azi_ev] = distance(xi,yi,evla,evlo,referenceEllipsoid('GRS80'));
-    azi_ev = azi_ev + 180;
     
     % Trace rays for each station
     CS = [];
@@ -68,21 +66,13 @@ for ie = 1:length(evlist)
             dr = deg2km(mean(diff(xnode)));
             Nr = floor(r/dr);
             [lat_way,lon_way] = gcwaypts(lat1,lon1,lat2,lon2,Nr);
-            [dr_ray,azi_ray] = distance(lat_way(1:end-1),lon_way(1:end-1),...
-                                 lat_way(2:end),lon_way(2:end),referenceEllipsoid('GRS80'));
-            dr_ray = dr_ray / 1000;
             dtp = [];
             for ip = 1:length(periods)
                 phv = checker(ip).phv;
-                phv_path = interp2(yi,xi,phv,lon_way(1:end-1),lat_way(1:end-1));
-                azi_ev_path = interp2(yi,xi,azi_ev,lon_way(1:end-1),lat_way(1:end-1));
+                phv_path = interp2(yi,xi,phv,lon_way,lat_way);
 %                 dtp(ip) = ddist ./ mean(phv_path(:));
-%                 dtp(ip) = ddist .* mean(1./phv_path(:));
+                dtp(ip) = ddist .* mean(1./phv_path(:));
 %                 disp(num2str(mean(phv_path(:))));
-                dr_ray_R = dr_ray.*cosd(azi_ray-azi_ev_path); % projected along event great circle
-                dt = trapz(cumsum(dr_ray_R),1./phv_path);
-                dtp(ip) = sign(ddist)*abs(dt);
-%                 disp(num2str(abs(sum(dr_ray_R))-abs(ddist)))
             end
             
 %             % Trace traveltime through checkerboard map

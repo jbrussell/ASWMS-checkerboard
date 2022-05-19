@@ -14,8 +14,10 @@ setup_parameters
 setup_ErrorCode
 
 % JBR
+% cohere_tol = parameters.cohere_tol;
 
-is_offgc_propagation = 0; % Account for off-great-circle propagation using eikonal tomography maps? Otherwise will assume great-circle propagation.
+is_offgc_propagation = parameters.is_offgc_propagation; % Account for off-great-circle propagation using eikonal tomography maps? Otherwise will assume great-circle propagation.
+off_azi_tol = parameters.off_azi_tol; % [deg] tolerance for propagation off great-circle
 
 % % Smoothing parameters
 % flweight_array = 100*ones(length(parameters.periods)); %parameters.flweight_array
@@ -35,8 +37,7 @@ is_offgc_propagation = 0; % Account for off-great-circle propagation using eikon
 % FSD = 75; 
 
 % Smoothing parameters
-parameters.smweight_array = parameters.smweight_array / 100;
-flweight_array = 0*ones(1,length(parameters.periods)); %parameters.flweight_array
+flweight_array = 100*ones(length(parameters.periods)); %parameters.flweight_array
 dterrtol = 2;    % largest variance of the inversion error allowed
 inverse_err_tol = 2; %2  % count be number of standard devition
 azi_bin_deg = 20; % [deg] size of azimuthal bins
@@ -44,16 +45,16 @@ min_nbin = 10; % minimum number of measurements in order to include bin
 % Main QC parameters
 fiterr_tol = 1e-2; % wavelet fitting error, throw out measurements greater than this
 maxstadist = 600;
-minstadist = 0;
-cohere_tol = 0; % 0.65
-min_stadist_wavelength = 0; %0.5; % minimum station separation in wavelengths
+minstadist = 200;
+cohere_tol = 0.80; % 0.65
+min_stadist_wavelength = 0.33; %0.5; % minimum station separation in wavelengths
 max_stadist_wavelength = 999;
 ref_phv = 4*ones(1,length(parameters.periods)); % for calculating wavelength
 APM = 114; % absolute plate motion (GSRM 2.1; NNR) https://www.unavco.org/software/geodetic-utilities/plate-motion-calculator/plate-motion-calculator.html
 FSD = 75; 
 
 % Norm damping for azimuthal anisotropy
-damp_azi = [1e10 1e10 1e10 1e10]; % [2c 2s 4c 4s] % Damping individual parameters
+damp_azi = [1 1 1e10 1e10]; % [2c 2s 4c 4s] % Damping individual parameters
 aziweight = 1; % global weight
 
 % debug setting
@@ -70,7 +71,7 @@ workingdir = parameters.workingdir;
 % input path
 eventcs_path = [workingdir,'CSmeasure/'];
 % output path
-eikonl_output_path = [workingdir,'eikonal/'];
+eikonl_propazi_output_path = [workingdir,'eikonal_propazi/'];
 eikonl_ani_output_path = [workingdir];
 
 
@@ -152,7 +153,7 @@ csmatfiles = dir([eventcs_path,'/*cs_',comp,'.mat']);
 % Loop through the periods
 clear eventphv_ani;
 for ip = 1:length(periods)
-	clear mat_azi azi rays ddist dt w 
+	clear mat_azi azi rays ddist dt w azi_vec
     disp(periods(ip));
 	smweight0 = smweight_array(ip);
 	flweight0 = flweight_array(ip); % JBR
@@ -172,10 +173,27 @@ for ip = 1:length(periods)
 			continue;
         end
         if is_offgc_propagation==1
-            eikonal_in = [eikonl_output_path,'/',eventcs.id,'_eikonal_',comp,'.mat'];
+            eikonal_in = [eikonl_propazi_output_path,'/',eventcs.id,'_eikonal_',comp,'.mat'];
+            if ~exist(eikonal_in,'file')
+                error('No propagation azimuth found. Need to first run a6_a0_eikonal_eq_GetPropAzi.m');
+            end
             temp = load(eikonal_in);
             phase_lat = temp.eventphv(ip).GVx; % phase slowness in x-direction
             phase_lon = temp.eventphv(ip).GVy; % phase slowness in y-direction
+                        
+            % Use event eikonal tomography results to get propagation azimuth
+            azimat = 90 - atan2d(phase_lat,phase_lon);
+            azimat(azimat<0) = azimat(azimat<0) + 360;
+            [~, azimat_ev] = distance(xi,yi,evla,evlo,referenceEllipsoid('GRS80'));
+            azimat(isnan(azimat)) = azimat_ev(isnan(azimat));
+            % Ensure that propagation azimuth is not too far from great-circle
+            diff_az = angdiff(azimat*pi/180,azimat_ev*pi/180)*180/pi;
+            if mean(abs(diff_az(:))) > off_azi_tol
+                % disp('off_azi_tol exceeded... skipping');
+                continue
+            end
+        else
+            [~, azimat] = distance(xi,yi,evla,evlo,referenceEllipsoid('GRS80'));               
         end
 
 		if exist('badstnms','var')
@@ -185,18 +203,18 @@ for ip = 1:length(periods)
 		end
 
 		% Build the rotation matrix
-		razi = azimuth(xi+gridsize/2,yi+gridsize/2,evla,evlo)+180;
-		R = sparse(2*Nx*Ny+4,2*Nx*Ny+4);
-		for i=1:Nx
-			for j=1:Ny
-				n=Ny*(i-1)+j;
-				theta = razi(i,j);
-				R(2*n-1,2*n-1) = cosd(theta);
-				R(2*n-1,2*n) = sind(theta);
-				R(2*n,2*n-1) = -sind(theta);
-				R(2*n,2*n) = cosd(theta);
-			end
-		end
+		razi = azimuth(xi+gridsize/2,yi+gridsize/2,evla,evlo,referenceEllipsoid('GRS80'))+180;
+		% R = sparse(2*Nx*Ny+4,2*Nx*Ny+4);
+		% for i=1:Nx
+		% 	for j=1:Ny
+		% 		n=Ny*(i-1)+j;
+		% 		theta = razi(i,j);
+		% 		R(2*n-1,2*n-1) = cosd(theta);
+		% 		R(2*n-1,2*n) = sind(theta);
+		% 		R(2*n,2*n-1) = -sind(theta);
+		% 		R(2*n,2*n) = cosd(theta);
+		% 	end
+		% end
 
 		% Calculate the relative travel time compare to one reference station
 % 		travel_time = Cal_Relative_dtp(eventcs);
@@ -253,15 +271,6 @@ for ip = 1:length(periods)
             mean_stala = mean([eventcs.stlas(eventcs.CS(ics).sta1), eventcs.stlas(eventcs.CS(ics).sta2)]);
             mean_stalo = mean([eventcs.stlos(eventcs.CS(ics).sta1), eventcs.stlos(eventcs.CS(ics).sta2)]);
             
-            
-            % Use event eikonal tomography results to get propagation azimuth?
-            if is_offgc_propagation==1
-                azimat = 90 - atan2d(phase_lat,phase_lon);
-                [~, azimat_ev] = distance(xi,yi,evla,evlo,referenceEllipsoid('GRS80'));
-                azimat(isnan(azimat)) = azimat_ev(isnan(azimat));
-            else
-                [~, azimat] = distance(xi,yi,evla,evlo,referenceEllipsoid('GRS80'));               
-            end
             for i=1:Nx
                 for j=1:Ny
                     n=Ny*(i-1)+j;
@@ -300,10 +309,10 @@ for ip = 1:length(periods)
 		mat = [mat_iso, mat_azi];
 
 		% build dumping matrix for ST
-		dumpmatT = R(2:2:2*Nx*Ny,:);
+% 		dumpmatT = R(2:2:2*Nx*Ny,:);
 		
 		% build dumping matrix for SR
-		dumpmatR = R(1:2:2*Nx*Ny-1,:);
+% 		dumpmatR = R(1:2:2*Nx*Ny-1,:);
 	
 
 		% Normalize smoothing kernel
@@ -316,15 +325,15 @@ for ip = 1:length(periods)
         NA=norm(W*mat,1);
         flweight = flweight0*NA/NR;
 
-		% Normalize dumping matrix for ST
-		NR=norm(dumpmatT,1);
-		NA=norm(W*mat,1);
-		dumpweightT = Tdumpweight0*NA/NR;
-		
-		% Normalize dumping matrix for SR
-		NR=norm(dumpmatR,1);
-		NA=norm(W*mat,1);
-		dumpweightR = Rdumpweight0*NA/NR;
+% 		% Normalize dumping matrix for ST
+% 		NR=norm(dumpmatT,1);
+% 		NA=norm(W*mat,1);
+% 		dumpweightT = Tdumpweight0*NA/NR;
+% 		
+% 		% Normalize dumping matrix for SR
+% 		NR=norm(dumpmatR,1);
+% 		NA=norm(W*mat,1);
+% 		dumpweightR = Rdumpweight0*NA/NR;
 		
 		% Rescale azimuthal anisotropy damping
 		NR=norm(F_azi_damp,1);
@@ -332,11 +341,13 @@ for ip = 1:length(periods)
 		aziweight0 = aziweight*NA/NR;
 
 		% Set up matrix on both side
-		A=[W*mat;smweight*F;flweight*F2;dumpweightT*dumpmatT;dumpweightR*dumpmatR;aziweight0*F_azi_damp];
+% 		A=[W*mat;smweight*F;flweight*F2;dumpweightT*dumpmatT;dumpweightR*dumpmatR;aziweight0*F_azi_damp];
+        A=[W*mat;smweight*F;flweight*F2;aziweight0*F_azi_damp];
 
 		avgv = eventcs.avgphv(ip);
         % rhs=[W*dt;zeros(size(F,1),1);zeros(size(F2,1),1);zeros(size(dumpmatT,1),1);dumpweightR*ones(size(dumpmatR,1),1)./avgv];
-		rhs=[W*dt;zeros(size(F,1),1);zeros(size(F2,1),1);zeros(size(dumpmatT,1),1);dumpweightR*ones(size(dumpmatR,1),1)./avgv;zeros(size(F_azi_damp,1),1)];
+% 		rhs=[W*dt;zeros(size(F,1),1);zeros(size(F2,1),1);zeros(size(dumpmatT,1),1);dumpweightR*ones(size(dumpmatR,1),1)./avgv;zeros(size(F_azi_damp,1),1)];
+        rhs=[W*dt;zeros(size(F,1),1);zeros(size(F2,1),1);zeros(size(F_azi_damp,1),1)];
 
 		
 		% Least square inversion
@@ -358,13 +369,16 @@ for ip = 1:length(periods)
 % 			err = W*err;
             err = isgood_mat*err;
 %             err = W*err;
-            stderr=std(err);
+            % stderr=std(err);
+            stderr=std(err(err~=0));
             if stderr > dterrtol
                 stderr = dterrtol;
             end
             for i=1:length(err)
-                if abs(err(i)) > inverse_err_tol*stderr
+                if abs(err(i)) > inverse_err_tol*stderr  || abs(err(i))==0
                     W(i,i)=0;
+                else
+                    W(i,i)=1./stderr;
                 end
             end
             ind = find(diag(W)==0);
@@ -384,25 +398,27 @@ for ip = 1:length(periods)
             NA=norm(W*mat,1);
             flweight = flweight0*NA/NR;
             
-            % rescale dumping matrix for St
-            NR=norm(dumpmatT,1);
-            NA=norm(W*mat,1);
-            dumpweightT = Tdumpweight0*NA/NR;
-            
-            % rescale dumping matrix for SR
-            NR=norm(dumpmatR,1);
-            NA=norm(W*mat,1);
-            dumpweightR = Rdumpweight0*NA/NR;
-			
+%             % rescale dumping matrix for St
+%             NR=norm(dumpmatT,1);
+%             NA=norm(W*mat,1);
+%             dumpweightT = Tdumpweight0*NA/NR;
+%             
+%             % rescale dumping matrix for SR
+%             NR=norm(dumpmatR,1);
+%             NA=norm(W*mat,1);
+%             dumpweightR = Rdumpweight0*NA/NR;
+ 			
 			% Rescale azimuthal anisotropy damping
             NR=norm(F_azi_damp,1);
             NA=norm(W*mat,1);
             aziweight0 = aziweight*NA/NR;
             
-			A=[W*mat;smweight*F;flweight*F2;dumpweightT*dumpmatT;dumpweightR*dumpmatR;aziweight0*F_azi_damp];
+% 			A=[W*mat;smweight*F;flweight*F2;dumpweightT*dumpmatT;dumpweightR*dumpmatR;aziweight0*F_azi_damp];
+            A=[W*mat;smweight*F;flweight*F2;aziweight0*F_azi_damp];
 
             % rhs=[W*dt;zeros(size(F,1),1);zeros(size(F2,1),1);zeros(size(dumpmatT,1),1);dumpweightR*ones(size(dumpmatR,1),1)./avgv];
-			rhs=[W*dt;zeros(size(F,1),1);zeros(size(F2,1),1);zeros(size(dumpmatT,1),1);dumpweightR*ones(size(dumpmatR,1),1)./avgv;zeros(size(F_azi_damp,1),1)];
+% 			rhs=[W*dt;zeros(size(F,1),1);zeros(size(F2,1),1);zeros(size(dumpmatT,1),1);dumpweightR*ones(size(dumpmatR,1),1)./avgv;zeros(size(F_azi_damp,1),1)];
+            rhs=[W*dt;zeros(size(F,1),1);zeros(size(F2,1),1);zeros(size(F_azi_damp,1),1)];
             phaseg=(A'*A)\(A'*rhs);
         end	
         
@@ -506,7 +522,7 @@ for ip = 1:length(periods)
 %% Make event list
 fid = fopen([workingdir,'azi_evlist.txt'],'w');
 
-for ip = 1 % 50 s
+for ip = 3 % 50 s
     isgood = eventphv_ani(ip).isgood;
     evids_all = eventphv_ani(ip).id(isgood);
     [evids,I] = unique(evids_all);
@@ -526,7 +542,7 @@ for ip = 1 % 50 s
 end
 fclose(fid);
     
- %% Fit anisotropy
+%% Fit anisotropy
 fit_azi = [];
 for ip = 1:length(periods)
     isgood = eventphv_ani(ip).isgood;
@@ -535,15 +551,25 @@ for ip = 1:length(periods)
     w = eventphv_ani(ip).w(isgood);
     w(w > (median(w)+rms(w)) ) = median(w)+rms(w);
     weight = w.*(-1/2);
-    [para fiterr]=fit_azi_anisotropy(azi,phv,weight);
-    parastd=confint(para,.95);
-    fit_azi.periods(ip)=periods(ip);
-    fit_azi.c_iso(ip)=para.a;
-    fit_azi.c_iso_95(ip)=parastd(2,1)-para.a;
-    fit_azi.A2(ip)=para.d;
-    fit_azi.A2_95(ip)=parastd(2,2)-para.d;
-    fit_azi.phi2(ip)=para.e;
-    fit_azi.phi2_95(ip)=parastd(2,3)-para.e;
+    if length(find(~isnan(phv))) > 3
+        [para fiterr]=fit_azi_anisotropy(azi,phv,weight);
+        parastd=confint(para,.95);
+        fit_azi.periods(ip)=periods(ip);
+        fit_azi.c_iso(ip)=para.a;
+        fit_azi.c_iso_95(ip)=parastd(2,1)-para.a;
+        fit_azi.A2(ip)=para.d;
+        fit_azi.A2_95(ip)=parastd(2,2)-para.d;
+        fit_azi.phi2(ip)=para.e;
+        fit_azi.phi2_95(ip)=parastd(2,3)-para.e;
+    else
+        fit_azi.periods(ip)=periods(ip);
+        fit_azi.c_iso(ip)=nan;
+        fit_azi.c_iso_95(ip)=nan;
+        fit_azi.A2(ip)=nan;
+        fit_azi.A2_95(ip)=nan;
+        fit_azi.phi2(ip)=nan;
+        fit_azi.phi2_95(ip)=nan;
+    end
 end
  
 fit_azi_bin = [];
@@ -577,15 +603,25 @@ for ip = 1:length(periods)
     
 %     [para fiterr]=fit_azi_anisotropy(fit_azi_bin.meas(ip).azi, fit_azi_bin.meas(ip).phv, fit_azi_bin.meas(ip).phv_std.^(1/2) .* sqrt(weight));
 %     [para fiterr]=fit_azi_anisotropy(fit_azi_bin.meas(ip).azi, fit_azi_bin.meas(ip).phv, sqrt(weight));
-    [para fiterr]=fit_azi_anisotropy(fit_azi_bin.meas(ip).azi, fit_azi_bin.meas(ip).phv);
-    parastd=confint(para,.95);
-    fit_azi_bin.periods(ip)=periods(ip);
-    fit_azi_bin.c_iso(ip)=para.a;
-    fit_azi_bin.c_iso_95(ip)=parastd(2,1)-para.a;
-    fit_azi_bin.A2(ip)=para.d;
-    fit_azi_bin.A2_95(ip)=parastd(2,2)-para.d;
-    fit_azi_bin.phi2(ip)=para.e;
-    fit_azi_bin.phi2_95(ip)=parastd(2,3)-para.e;
+    if length(find(~isnan(fit_azi_bin.meas(ip).phv))) > 3
+        [para fiterr]=fit_azi_anisotropy(fit_azi_bin.meas(ip).azi, fit_azi_bin.meas(ip).phv);
+        parastd=confint(para,.95);
+        fit_azi_bin.periods(ip)=periods(ip);
+        fit_azi_bin.c_iso(ip)=para.a;
+        fit_azi_bin.c_iso_95(ip)=parastd(2,1)-para.a;
+        fit_azi_bin.A2(ip)=para.d;
+        fit_azi_bin.A2_95(ip)=parastd(2,2)-para.d;
+        fit_azi_bin.phi2(ip)=para.e;
+        fit_azi_bin.phi2_95(ip)=parastd(2,3)-para.e;
+    else
+        fit_azi_bin.periods(ip)=periods(ip);
+        fit_azi_bin.c_iso(ip)=nan;
+        fit_azi_bin.c_iso_95(ip)=nan;
+        fit_azi_bin.A2(ip)=nan;
+        fit_azi_bin.A2_95(ip)=nan;
+        fit_azi_bin.phi2(ip)=nan;
+        fit_azi_bin.phi2_95(ip)=nan;
+    end
 end
 
 fit_azi_bin_res = [];
@@ -621,13 +657,21 @@ for ip = 1:length(periods)
     
 %     [para fiterr]=fit_azi_anisotropy(fit_azi_bin.meas(ip).azi, fit_azi_bin.meas(ip).phv, fit_azi_bin.meas(ip).phv_std.^(1/2) .* sqrt(weight));
 %     [para fiterr]=fit_azi_anisotropy(fit_azi_bin.meas(ip).azi, fit_azi_bin.meas(ip).phv, sqrt(weight));
-    [para fiterr]=fit_azi_anisotropy2theta_resid(fit_azi_bin_res.meas(ip).azi, fit_azi_bin_res.meas(ip).dphv);
-    parastd=confint(para,.95);
-    fit_azi_bin_res.periods(ip)=periods(ip);
-    fit_azi_bin_res.A2(ip)=para.d;
-    fit_azi_bin_res.A2_95(ip)=parastd(2,1)-para.d;
-    fit_azi_bin_res.phi2(ip)=para.e;
-    fit_azi_bin_res.phi2_95(ip)=parastd(2,2)-para.e;
+    if length(find(~isnan(fit_azi_bin_res.meas(ip).dphv))) > 3
+        [para fiterr]=fit_azi_anisotropy2theta_resid(fit_azi_bin_res.meas(ip).azi, fit_azi_bin_res.meas(ip).dphv);
+        parastd=confint(para,.95);
+        fit_azi_bin_res.periods(ip)=periods(ip);
+        fit_azi_bin_res.A2(ip)=para.d;
+        fit_azi_bin_res.A2_95(ip)=parastd(2,1)-para.d;
+        fit_azi_bin_res.phi2(ip)=para.e;
+        fit_azi_bin_res.phi2_95(ip)=parastd(2,2)-para.e;
+    else
+        fit_azi_bin_res.periods(ip)=periods(ip);
+        fit_azi_bin_res.A2(ip)=nan;
+        fit_azi_bin_res.A2_95(ip)=nan;
+        fit_azi_bin_res.phi2(ip)=nan;
+        fit_azi_bin_res.phi2_95(ip)=nan;
+    end
 end
 
 matfilename = [eikonl_ani_output_path,'/eikonal_ani1D_',comp,'.mat'];
@@ -652,7 +696,7 @@ disp(['Save the result to: ',matfilename])
 			if isnan(avgv)
 				continue;
 			end
-			r = 0.05;
+			r = 0.1;
 			caxis([avgv*(1-r) avgv*(1+r)])
 			colorbar
 			load seiscmap
@@ -750,52 +794,57 @@ disp(['Save the result to: ',matfilename])
 	xlabel('Periods (s)');
     
     %%
-%     figure(90); clf;
-%     for ip = 1:length(periods)
-%         M=4;
-%         N=4;
-%         isgood = eventphv_ani(ip).isgood;
-% 	    dt = eventphv_ani(ip).dt(isgood);
-%         azi = eventphv_ani(ip).azi(isgood);
-%         azi(azi<0) = azi(azi<0)+360;
-%         phv = eventphv_ani(ip).phv(isgood);
-%         avgv = eventphv_ani(ip).GV_av;
-%         phv_iso = eventphv_ani(ip).phv_iso(isgood);
-%         
-%         azi_bin = fit_azi_bin.meas(ip).azi;
-%         phv_bin = fit_azi_bin.meas(ip).phv;
-%         phv_iso_bin = fit_azi_bin.c_iso(ip);
-%         dv_std_bin = fit_azi_bin.meas(ip).phv_std./phv_iso_bin*100;
-%         dv_bin = (phv_bin-phv_iso_bin)./phv_iso_bin*100;
-%         azi_bin_res = fit_azi_bin_res.meas(ip).azi;
-%         dv_bin_res = fit_azi_bin_res.meas(ip).dphv*100;
-%         dv_std_bin_res = fit_azi_bin_res.meas(ip).dphv_std*100;
-%         
-%         dv = (phv-avgv)./avgv*100;
-%         dv2 = (phv-phv_iso)./phv_iso*100;
-%         dv2_not = (eventphv_ani(ip).ddist(~isgood)./eventphv_ani(ip).dt(~isgood)-eventphv_ani(ip).phv_iso(~isgood))./eventphv_ani(ip).phv_iso(~isgood)*100;
-%         dv3 = (phv-nanmean(phv_iso))./nanmean(phv_iso)*100;
-%         
-%         A2 = eventphv_ani(ip).A2;
-%         phi2 = eventphv_ani(ip).phi2;
-%         theta = [0:1:360];
-%         
-%         subplot(M,N,ip); hold on;
-% %         plot(azi,dv,'.'); hold on;
-% %         plot(eventphv_ani(ip).azi(~isgood),dv2_not,'.','color',[0.8 0.8 0.8]);
+    figure(90); clf;
+    for ip = 1:length(periods)
+        M=4;
+        N=4;
+        isgood = eventphv_ani(ip).isgood;
+	    dt = eventphv_ani(ip).dt(isgood);
+        azi = eventphv_ani(ip).azi(isgood);
+        azi(azi<0) = azi(azi<0)+360;
+        phv = eventphv_ani(ip).phv(isgood);
+        avgv = eventphv_ani(ip).GV_av;
+        phv_iso = eventphv_ani(ip).phv_iso(isgood);
+        
+        azi_bin = fit_azi_bin.meas(ip).azi;
+        phv_bin = fit_azi_bin.meas(ip).phv;
+        phv_iso_bin = fit_azi_bin.c_iso(ip);
+        dv_std_bin = fit_azi_bin.meas(ip).phv_std./phv_iso_bin*100;
+        dv_bin = (phv_bin-phv_iso_bin)./phv_iso_bin*100;
+        azi_bin_res = fit_azi_bin_res.meas(ip).azi;
+        dv_bin_res = fit_azi_bin_res.meas(ip).dphv*100;
+        dv_std_bin_res = fit_azi_bin_res.meas(ip).dphv_std*100;
+        
+        dv = (phv-avgv)./avgv*100;
+        dv2 = (phv-phv_iso)./phv_iso*100;
+        dv2_not = (eventphv_ani(ip).ddist(~isgood)./eventphv_ani(ip).dt(~isgood)-eventphv_ani(ip).phv_iso(~isgood))./eventphv_ani(ip).phv_iso(~isgood)*100;
+        dv3 = (phv-nanmean(phv_iso))./nanmean(phv_iso)*100;
+        
+        A2 = eventphv_ani(ip).A2;
+        phi2 = eventphv_ani(ip).phi2;
+        theta = [0:1:360];
+        
+        subplot(M,N,ip); hold on;
+%         plot(azi,dv,'.'); hold on;
+%         plot(eventphv_ani(ip).azi(~isgood),dv2_not,'.','color',[0.8 0.8 0.8]);
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% %     WARNING! THIS PLOTS ALL DATA AT ONCE AND MAY REQUIRE A LOT OF MEMORY!
 %         plot(azi,dv2,'.','color',[0.8 0.8 0.8]); hold on;
-%         errorbar(azi_bin,dv_bin,dv_std_bin,'ok');
-%         errorbar(azi_bin_res,dv_bin_res,dv_std_bin_res,'om');
-% %         plot(azi,dv3,'.r');
-%         plot(theta,A2*cosd(2*(theta-phi2))*100,'-r');
-%         plot(theta,fit_azi.A2(ip)*cosd(2*(theta-fit_azi.phi2(ip)))*100,'-b');
-%         plot(theta,fit_azi_bin.A2(ip)*cosd(2*(theta-fit_azi_bin.phi2(ip)))*100,'-k');
-%         plot(theta,fit_azi_bin_res.A2(ip)*cosd(2*(theta-fit_azi_bin_res.phi2(ip)))*100,'-m');
-%         title([num2str(periods(ip)),' s']);
-%         ylim([-5 5]);
-%         xlim([0 360]);
-%     end
-%     
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        errorbar(azi_bin,dv_bin,dv_std_bin,'ok');
+        errorbar(azi_bin_res,dv_bin_res,dv_std_bin_res,'om');
+%         plot(azi,dv3,'.r');
+        plot(theta,A2*cosd(2*(theta-phi2))*100,'-r');
+        plot(theta,fit_azi.A2(ip)*cosd(2*(theta-fit_azi.phi2(ip)))*100,'-b');
+        plot(theta,fit_azi_bin.A2(ip)*cosd(2*(theta-fit_azi_bin.phi2(ip)))*100,'-k');
+        plot(theta,fit_azi_bin_res.A2(ip)*cosd(2*(theta-fit_azi_bin_res.phi2(ip)))*100,'-m');
+        title([num2str(periods(ip)),' s']);
+        ylim([-5 5]);
+        xlim([0 360]);
+    end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% %  WARNING! THIS PLOTS ALL DATA AT ONCE AND MAY REQUIRE A LOT OF MEMORY!
 %     figure(91); clf;
 %     for ip = 1:length(periods)
 %         isgood = eventphv_ani(ip).isgood;
@@ -815,37 +864,41 @@ disp(['Save the result to: ',matfilename])
 %         plot(azi,dv2-A2*cosd(2*(azi-phi2))*100,'.g'); hold on;
 % %         ylim([-10 10]);
 %     end
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%% Plot residuals
-clear residuals
-for ip = 1:length(eventphv_ani)
-    isgood = eventphv_ani(ip).isgood;
-    dt_res = eventphv_ani(ip).dt_res(isgood);
-    residuals(ip).rms_dt_res = rms(dt_res(:));
-    residuals(ip).mean_dt_res = mean(dt_res(:));
-    residuals(ip).dt_res = dt_res(:);
-end
+    %% Plot residuals
+    clear residuals
+    for ip = 1:length(eventphv_ani)
+        isgood = eventphv_ani(ip).isgood;
+        dt_res = eventphv_ani(ip).dt_res(isgood);
+        residuals(ip).rms_dt_res = rms(dt_res(:));
+        residuals(ip).mean_dt_res = mean(dt_res(:));
+        residuals(ip).dt_res = dt_res(:);
+    end
 
-%%
-figure(87); clf; set(gcf,'color','w','position',[1035         155         560         781]);
-for ip = 1:length(periods)
-    subplot(2,1,1);
-    plot(periods(ip),residuals(ip).mean_dt_res,'o','color',[0.7 0.7 0.7]); hold on;
-    plot(periods(ip),nanmean(residuals(ip).mean_dt_res),'rs','linewidth',2,'markersize',10);
-    ylabel('mean (dt_{obs}-dt_{pre})')
-    set(gca,'linewidth',1.5,'fontsize',15);
-    subplot(2,1,2);
-    plot(periods(ip),residuals(ip).rms_dt_res,'o','color',[0.7 0.7 0.7]); hold on;
-    plot(periods(ip),nanmean(residuals(ip).rms_dt_res),'rs','linewidth',2,'markersize',10);
-    xlabel('Period (s)');
-    ylabel('RMS (dt_{obs}-dt_{pre})')
-    set(gca,'linewidth',1.5,'fontsize',15);
-end
+    %%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% %  WARNING! THIS PLOTS ALL DATA AT ONCE AND MAY REQUIRE A LOT OF MEMORY!
+%     figure(87); clf; set(gcf,'color','w','position',[1035         155         560         781]);
+%     for ip = 1:length(periods)
+%         subplot(2,1,1);
+%         plot(periods(ip),residuals(ip).mean_dt_res,'o','color',[0.7 0.7 0.7]); hold on;
+%         plot(periods(ip),nanmean(residuals(ip).mean_dt_res),'rs','linewidth',2,'markersize',10);
+%         ylabel('mean (dt_{obs}-dt_{pre})')
+%         set(gca,'linewidth',1.5,'fontsize',15);
+%         subplot(2,1,2);
+%         plot(periods(ip),residuals(ip).rms_dt_res,'o','color',[0.7 0.7 0.7]); hold on;
+%         plot(periods(ip),nanmean(residuals(ip).rms_dt_res),'rs','linewidth',2,'markersize',10);
+%         xlabel('Period (s)');
+%         ylabel('RMS (dt_{obs}-dt_{pre})')
+%         set(gca,'linewidth',1.5,'fontsize',15);
+%     end
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-figure(86); clf;
-for ip = 1:length(periods)
-    subplot(M,N,ip)
-    histogram(residuals(ip).dt_res);
-    title([num2str(periods(ip)),' s'],'fontsize',15)
-    xlabel('Residual (s)');
-end
+    figure(86); clf;
+    for ip = 1:length(periods)
+        subplot(M,N,ip)
+        histogram(residuals(ip).dt_res);
+        title([num2str(periods(ip)),' s'],'fontsize',15)
+        xlabel('Residual (s)');
+    end
