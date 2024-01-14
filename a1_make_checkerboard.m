@@ -11,6 +11,7 @@ checksize_deg = 2 * ones(size(periods)); % size of checker in degrees
 dv_check_frac = 0.05 * ones(size(periods)); % fraction of phase velocity perturbation (%/100)
 is_box_checks = 0; % is_box_checks = 1: boxwave function (sharp edges), is_box_checks = 0: sine wave (smooth edges)
 phv_ref = 4*ones(size(periods)); % Average phase velocity of checkerboard map
+rotation_angle = 0; % +Clockwise Rotation angle in degrees (change this value to adjust the orientation)
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 workingdir = parameters.workingdir;
@@ -29,14 +30,18 @@ Ny=length(ynode);
 
 %% Build checkerboard
 checker = [];
+
+% Calculate rotated reference grid (+ rotates clockwise)
+xi_rot = xi*cosd(rotation_angle)+yi*sind(rotation_angle);
+yi_rot = xi*sind(rotation_angle)-yi*cosd(rotation_angle);
 for ip = 1:length(periods)
     deg_check = checksize_deg(ip);
     amp_check = dv_check_frac(ip);
     
     if is_box_checks
-        check_mat = amp_check * square(pi/deg_check*xi).*square(pi/deg_check*yi);
+        check_mat = amp_check * square(pi/deg_check*xi_rot).*square(pi/deg_check*yi_rot);
     else
-        check_mat = amp_check * sin(pi/deg_check*xi).*sin(pi/deg_check*yi);
+        check_mat = amp_check * sin(pi/deg_check*xi_rot).*sin(pi/deg_check*yi_rot);
     end
     % Calculate phase velocity map
     phv = (1+check_mat) .* phv_ref(ip);
