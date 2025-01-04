@@ -104,8 +104,8 @@ for ie = 1:length(evlist)
 %                 dtp(ip) = sum(GmatRT(:).*slowness(:));
 %             end
             
-            CS(ipair).sta1 = ista1;
-            CS(ipair).sta2 = ista2;
+            CS(ipair).sta1 = sta1;
+            CS(ipair).sta2 = sta2;
             CS(ipair).win_cent_t = [];
             CS(ipair).ddist = ddist;
             CS(ipair).fitpara = [];
