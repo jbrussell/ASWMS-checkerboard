@@ -259,10 +259,10 @@ for ip = 1:length(periods)
             evinfo.evdp(raynum,:) = eventcs.evdp;
             evinfo.Mw(raynum,:) = eventcs.Mw;
 			
-			rays(raynum,1) = eventcs.stlas(eventcs.CS(ics).sta1);
-			rays(raynum,2) = eventcs.stlos(eventcs.CS(ics).sta1);
-			rays(raynum,3) = eventcs.stlas(eventcs.CS(ics).sta2);
-			rays(raynum,4) = eventcs.stlos(eventcs.CS(ics).sta2);
+			rays(raynum,1) = eventcs.stlas(strcmp(eventcs.stnms,eventcs.CS(ics).sta1));
+            rays(raynum,2) = eventcs.stlos(strcmp(eventcs.stnms,eventcs.CS(ics).sta1));
+            rays(raynum,3) = eventcs.stlas(strcmp(eventcs.stnms,eventcs.CS(ics).sta2));
+            rays(raynum,4) = eventcs.stlos(strcmp(eventcs.stnms,eventcs.CS(ics).sta2));
 		
 			% JBR - Build azimuthal part of data kernel
 			ddist(raynum,:) = eventcs.CS(ics).ddist;

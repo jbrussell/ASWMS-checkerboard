@@ -136,10 +136,10 @@ for ie = 1:length(csmatfiles)
 	% Build the ray locations
 	clear rays 
 	for ics = 1:length(eventcs.CS)
-		rays(ics,1) = eventcs.stlas(eventcs.CS(ics).sta1);
-		rays(ics,2) = eventcs.stlos(eventcs.CS(ics).sta1);
-		rays(ics,3) = eventcs.stlas(eventcs.CS(ics).sta2);
-		rays(ics,4) = eventcs.stlos(eventcs.CS(ics).sta2);
+		rays(ics,1) = eventcs.stlas(strcmp(eventcs.stnms,eventcs.CS(ics).sta1));
+		rays(ics,2) = eventcs.stlos(strcmp(eventcs.stnms,eventcs.CS(ics).sta1));
+		rays(ics,3) = eventcs.stlas(strcmp(eventcs.stnms,eventcs.CS(ics).sta2));
+		rays(ics,4) = eventcs.stlos(strcmp(eventcs.stnms,eventcs.CS(ics).sta2));
 	end
 
 	% Build the kernel
